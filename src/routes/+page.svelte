@@ -17,6 +17,14 @@
         };
     }
 
+    interface GexLevelsDuckData {
+        dte: number[];
+        strike: number[];
+        total_call_gex: number[];
+        total_put_gex: number[];
+        total_gamma: number[];
+    }
+
     interface GexLevelsData {
         [key: string]: {
             strike: number[];
@@ -46,6 +54,7 @@
             from: number;
             to: number;
         };
+        duckData?: GexLevelsDuckData;
     }
 
     let chartData: ProcessedData | null = null;
@@ -56,12 +65,41 @@
         zeroGamma: "http://localhost:9999/zero_gamma",
         gexLevels: "http://localhost:9999/gex_levels",
         ohlc: "http://localhost:9999/ohlc_data",
+        gexLevelsduck: "http://localhost:9999/gex_levels_duck",
     };
+
+    async function refetchData(): Promise<void> {
+        try {
+            const responses = await Promise.all([
+                fetch(API_ENDPOINTS.gexProfile).then(
+                    (r) =>
+                        r.json() as Promise<Record<string, GammaProfileData>>,
+                ),
+                fetch(API_ENDPOINTS.zeroGamma).then(
+                    (r) => r.json() as Promise<ZeroGammaData>,
+                ),
+                fetch(API_ENDPOINTS.gexLevels).then(
+                    (r) => r.json() as Promise<GexLevelsData>,
+                ),
+                fetch(API_ENDPOINTS.gexLevelsduck).then(
+                    (r) => r.json() as Promise<GexLevelsDuckData>,
+                ),
+                fetch(API_ENDPOINTS.ohlc).then(
+                    (r) => r.json() as Promise<OHLCData>,
+                ),
+            ]);
+            chartData = processData(...responses);
+            renderCharts();
+        } catch (err) {
+            error = (err as Error).message;
+        }
+    }
 
     function processData(
         gex: Record<string, GammaProfileData>,
         zeroGamma: ZeroGammaData,
         gexLevels: GexLevelsData,
+        gexLevelsDuck: GexLevelsDuckData,
         ohlc: OHLCData,
     ): ProcessedData {
         const gammaProfileKey = Object.keys(gex)[0];
@@ -85,13 +123,14 @@
             spotPrice: spotPrice,
             zeroGamma: zgData["Zero Gamma"][0],
             chartRange: {
-                // from: Math.min(...gammaProfile.index),
-                // to: Math.max(...gammaProfile.index),
                 from: 0.8 * spotPrice, // Set lower bound to 80% of spot price
                 to: 1.2 * spotPrice, // Set upper bound to 120% of spot price
             },
+            duckData: gexLevelsDuck,
         };
     }
+
+    // function to process the data from
 
     onMount(async () => {
         try {
@@ -105,6 +144,9 @@
                 ),
                 fetch(API_ENDPOINTS.gexLevels).then(
                     (r) => r.json() as Promise<GexLevelsData>,
+                ),
+                fetch(API_ENDPOINTS.gexLevelsduck).then(
+                    (r) => r.json() as Promise<GexLevelsDuckData>,
                 ),
                 fetch(API_ENDPOINTS.ohlc).then(
                     (r) => r.json() as Promise<OHLCData>,
@@ -130,6 +172,10 @@
 
         // Chart 3
         vegaEmbed("#chart3", getChart3Spec(chartData));
+
+        // NEW: Render Duck Chart
+        vegaEmbed("#duckChart", getDuckChartSpec(chartData, chartData!.duckData!));
+
     }
 
     // Vega-Lite specifications with type annotations
@@ -199,18 +245,18 @@
                 data: { values: [{ legendLabel: "Spot Price" }] },
             },
             {
-            mark: { type: "rule", color: "blue" },
-            encoding: {
-                x: { datum: data.zeroGamma, title: "" },
-                color: {
-                    field: "legendLabel",
-                    type: "nominal",
-                    scale: { range: ["green"] },
-                    legend: { title: "Legend" },
+                mark: { type: "rule", color: "blue" },
+                encoding: {
+                    x: { datum: data.zeroGamma, title: "" },
+                    color: {
+                        field: "legendLabel",
+                        type: "nominal",
+                        scale: { range: ["green"] },
+                        legend: { title: "Legend" },
+                    },
                 },
+                data: { values: [{ legendLabel: "Zero Gamma" }] },
             },
-            data: { values: [{ legendLabel: "Zero Gamma" }] },
-        },
         ],
     });
 
@@ -331,6 +377,74 @@
             },
         ],
     });
+
+    const getDuckChartSpec = (
+        data: ProcessedData,
+        duckData: GexLevelsDuckData,
+    ): any => ({
+        $schema: "https://vega.github.io/schema/vega-lite/v6.json",
+        width: 800,
+        height: 400,
+        title: "GEX Duck Data Overview",
+        data: {
+            values: duckData.strike.map((strike, i) => ({
+                strike,
+                callGex: duckData.total_call_gex[i],
+                putGex: duckData.total_put_gex[i],
+                dte: duckData.dte ? duckData.dte[i] : undefined,
+            })),
+        },
+        transform: [
+            {
+                filter: {
+                    and: [
+                        { field: "strike", gte: 0.8 * data.spotPrice },
+                        { field: "strike", lte: 1.2 * data.spotPrice },
+                    ],
+                },
+            },
+        ],
+        encoding: {
+            x: {
+                field: "strike",
+                type: "quantitative",
+                title: "Strike Price",
+            },
+            y: {
+                field: "callGex",
+                type: "quantitative",
+                title: "Call GEX Value",
+            },
+            color: {
+                field: "putGex",
+                type: "quantitative",
+                title: "Put GEX Value",
+                scale: { scheme: "reds" },
+                legend: { title: "Put GEX" },
+            },
+            tooltip: [
+                { field: "strike", type: "quantitative", title: "Strike" },
+                { field: "callGex", type: "quantitative", title: "Call GEX" },
+                { field: "putGex", type: "quantitative", title: "Put GEX" },
+                { field: "dte", type: "quantitative", title: "Days to Expiry" },
+            ],
+        },
+        layer: [
+            {
+                mark: {
+                    type: "bar",
+                    width: 8,
+                    stroke: "black",
+                    strokeWidth: 0.2,
+                },
+            },
+        ],
+        config: {
+            axis: {
+                labelAngle: 0,
+            },
+        },
+    });
 </script>
 
 // src/routes/+page.svelte
@@ -343,7 +457,9 @@
         <div id="chart1"></div>
         <div id="chart2"></div>
         <div id="chart3"></div>
+        <div id="duckChart"></div>
     {/if}
+    <button on:click={refetchData}>Refetch Data</button>
 </div>
 
 <style>
