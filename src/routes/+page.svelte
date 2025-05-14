@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { scale } from "vega";
     import vegaEmbed, { type Result } from "vega-embed";
 
     // Type definitions
@@ -65,7 +66,7 @@
         zeroGamma: "http://localhost:9999/zero_gamma",
         gexLevels: "http://localhost:9999/gex_levels",
         ohlc: "http://localhost:9999/ohlc_data",
-        gexLevelsduck: "http://localhost:9999/gex_levels_duck",
+        gexLevelsduck: "http://localhost:9999/gex_levels_duck?dte_min=0&dte_max=200&ticker=_SPX",
     };
 
     async function refetchData(): Promise<void> {
@@ -174,8 +175,10 @@
         vegaEmbed("#chart3", getChart3Spec(chartData));
 
         // NEW: Render Duck Chart
-        vegaEmbed("#duckChart", getDuckChartSpec(chartData, chartData!.duckData!));
-
+        vegaEmbed(
+            "#duckChart",
+            getDuckChartSpec(chartData, chartData!.duckData!),
+        );
     }
 
     // Vega-Lite specifications with type annotations
@@ -385,7 +388,7 @@
         $schema: "https://vega.github.io/schema/vega-lite/v6.json",
         width: 800,
         height: 400,
-        title: "GEX Duck Data Overview",
+        title: "GEX Duck Data Overview (Aggregated by Strike)",
         data: {
             values: duckData.strike.map((strike, i) => ({
                 strike,
@@ -403,6 +406,31 @@
                     ],
                 },
             },
+            // Aggregate callGex and putGex by strike
+            {
+                joinaggregate: [
+                    { op: "sum", field: "callGex", as: "callGexSum" },
+                    { op: "sum", field: "putGex", as: "putGexSum" },
+                ],
+                groupby: ["strike"],
+            },
+            // Optional: rename fields for clarity
+            {
+                calculate: "datum.callGexSum",
+                as: "callGex",
+            },
+            {
+                calculate: "datum.putGexSum",
+                as: "putGex",
+            },
+            // Filter out rows where both callGex and putGex are zero
+            {
+                filter: "datum.callGex !== 0 || datum.putGex !== 0",
+            },
+            {
+                calculate: "'aggregated'",
+                as: "tooltipNote",
+            },
         ],
         encoding: {
             x: {
@@ -413,20 +441,26 @@
             y: {
                 field: "callGex",
                 type: "quantitative",
-                title: "Call GEX Value",
+                title: "Total Call GEX (Sum)",
+                scale: { scheme: "blues" },
+                legend: { title: "Sum of Gamma Call" },
             },
             color: {
                 field: "putGex",
                 type: "quantitative",
-                title: "Put GEX Value",
+                title: "Total Put GEX (Sum)",
                 scale: { scheme: "reds" },
-                legend: { title: "Put GEX" },
+                legend: { title: "Sum of Gamma Put" },
             },
             tooltip: [
                 { field: "strike", type: "quantitative", title: "Strike" },
-                { field: "callGex", type: "quantitative", title: "Call GEX" },
-                { field: "putGex", type: "quantitative", title: "Put GEX" },
-                { field: "dte", type: "quantitative", title: "Days to Expiry" },
+                {
+                    field: "callGex",
+                    type: "quantitative",
+                    title: "Call GEX Sum",
+                },
+                { field: "putGex", type: "quantitative", title: "Put GEX Sum" },
+                { datum: "Aggregated across DTEs", title: "Note" },
             ],
         },
         layer: [
