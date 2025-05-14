@@ -1,5 +1,10 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { initDuckDB } from '$lib/duckdb';
+    import * as duckdb from '@duckdb/duckdb-wasm';
+
+    let db: duckdb.AsyncDuckDB | null = null;
+
     import { scale } from "vega";
     import vegaEmbed, { type Result } from "vega-embed";
 
@@ -134,11 +139,15 @@
     // function to process the data from
 
     onMount(async () => {
+        if (typeof window === 'undefined') {
+            console.warn("⚠️ Running in SSR context, skipping DuckDB init.");
+            return;
+        }
+
         try {
             const responses = await Promise.all([
                 fetch(API_ENDPOINTS.gexProfile).then(
-                    (r) =>
-                        r.json() as Promise<Record<string, GammaProfileData>>,
+                    (r) => r.json() as Promise<Record<string, GammaProfileData>>,
                 ),
                 fetch(API_ENDPOINTS.zeroGamma).then(
                     (r) => r.json() as Promise<ZeroGammaData>,
@@ -153,12 +162,26 @@
                     (r) => r.json() as Promise<OHLCData>,
                 ),
             ]);
-            // print each response to the console
             console.log(responses);
             chartData = processData(...responses);
             renderCharts();
         } catch (err) {
             error = (err as Error).message;
+        }
+
+        // Moved inside the async function and after try-catch
+        try {
+            db = await initDuckDB();
+            console.log("✅ DuckDB initialized"); // Debug line
+            const conn = await db.connect();
+            await conn.query("CREATE TABLE items(item TEXT)");
+            await conn.query("INSERT INTO items VALUES ('apple'), ('banana')");
+            const result = await conn.query("SELECT * FROM items");
+            
+            console.log("🦆 Query result:", result.toArray()); // Log result
+        } catch (err) {
+            console.error("❌ DuckDB error:", err); // Log full error
+            error = `DuckDB init error: ${(err as Error).message}`;
         }
     });
 

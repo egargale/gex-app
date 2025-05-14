@@ -21,6 +21,7 @@
 		"vite": "^6.2.5"
 	},
 	"dependencies": {
+		"@duckdb/duckdb-wasm": "^1.29.1-dev132.0",
 		"vega": "^6.1.2",
 		"vega-embed": "^7.0.2",
 		"vega-lite": "^6.1.0"
